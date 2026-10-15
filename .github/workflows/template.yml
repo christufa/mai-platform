@@ -2,6 +2,12 @@ name: template
 
 # Renders the Copier template with default answers and runs the generated
 # project's lint + tests inside the published runtime image.
+#
+# The image is built by the `image` workflow, which can still be running (or
+# not have run yet) when this starts. So:
+#   - check-image skips the test with a notice if :runtime isn't published yet
+#   - workflow_run re-runs this automatically after every successful image
+#     build on main, so template + image are always tested together
 
 on:
   push:
@@ -9,10 +15,42 @@ on:
     paths: ["template/**", "copier.yml", ".github/workflows/template.yml"]
   pull_request:
     paths: ["template/**", "copier.yml", ".github/workflows/template.yml"]
+  workflow_run:
+    workflows: [image]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mai-base:runtime
+
 jobs:
+  check-image:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Is the runtime image published?
+        id: check
+        run: |
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE is not published yet, so the template test is skipped. It re-runs automatically when the image workflow finishes on main."
+          fi
+
   render-and-test:
+    needs: check-image
+    if: needs.check-image.outputs.exists == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,8 +63,12 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # after an image build, test the exact commit that image came from
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Render template
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           uvx copier copy --trust --defaults --vcs-ref HEAD \
             --data project_name=ci-sample . /tmp/ci-sample
       - name: Install, lint, test
