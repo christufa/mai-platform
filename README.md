@@ -90,7 +90,7 @@ Safety nets on every build:
 
 | Area | Setting |
 |---|---|
-| `main` (ruleset `protect-main`) | Changes only via squash-merged PRs; required checks `image-gate`, `template-gate`, `workflow-lint`; linear, signed history; no force-push or deletion. You (admin) can bypass the checks on a PR in an emergency, never push directly |
+| `main` (rulesets `main-integrity` + `main-changes`) | Nobody, including you, can force-push or delete `main`. Everyone else changes it only via squash-merged PRs that pass `image-gate`, `template-gate`, `workflow-lint`, with linear, signed history. You (repo admin) bypass `main-changes`, so you can push directly |
 | Release tags (`protect-release-tags`) | `v*` tags can't be moved or deleted, so `dev-0.1.0` always means the same thing |
 | Workflows | No token permissions by default (each job requests its own); actions SHA-pinned and allow-listed (`security/selected-actions.json`); fork PRs need your approval to run; fork PRs never push, sign or write the build cache |
 | Linting | `workflow-lint` runs actionlint + zizmor on every PR |
@@ -99,7 +99,7 @@ Safety nets on every build:
 
 The required checks are *gate* jobs that always report, even when a PR doesn't touch the image or template (those jobs are skipped, and the gate still passes). That's what makes it safe to require them with path-filtered workflows.
 
-Working with the ruleset: `git switch -c my-change` → commit → `git push -u origin my-change` → `gh pr create --fill` → `gh pr merge --auto --squash` (merges itself once checks pass).
+You can push straight to `main`. For a change you want CI to check first, use a PR: `git switch -c my-change` → commit → `git push -u origin my-change` → `gh pr create --fill` → `gh pr merge --auto --squash` (merges itself once checks pass).
 
 ## Day-to-day
 

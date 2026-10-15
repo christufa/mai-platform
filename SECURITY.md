@@ -22,7 +22,8 @@ cosign verify ghcr.io/christufa/mai-base:runtime-0.1.0 \
 
 ## How this repo is protected
 
-- `main` only changes through pull requests that pass `image-gate`,
+- `main` can't be force-pushed or deleted by anyone. Apart from the owner,
+  it only changes through pull requests that pass `image-gate`,
   `template-gate` and `workflow-lint`; history is linear and signed.
 - Release tags (`v*`) can't be moved or deleted once pushed.
 - Workflows run with no token permissions by default; each job requests only
