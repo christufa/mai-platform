@@ -1,0 +1,61 @@
+name: workflow-lint
+
+# Lints every GitHub Actions workflow on every PR and push to main:
+#   - actionlint: syntax, expressions, shell (shellcheck)
+#   - zizmor:     security (unpinned actions, injection, excessive permissions,
+#                 dangerous triggers, credential persistence, ...)
+# Covers this repo's workflows AND the CI workflow generated projects get
+# (rendered from the template first, since the source is Jinja).
+# Tool versions are pinned here; Renovate bumps them.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: workflow-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # renovate: datasource=pypi depName=actionlint-py
+  ACTIONLINT_VERSION: "1.7.12.25"
+  # renovate: datasource=pypi depName=zizmor
+  ZIZMOR_VERSION: "1.31.0"
+  # renovate: datasource=pypi depName=copier
+  COPIER_VERSION: "9.19.1"
+
+jobs:
+  workflow-lint:
+    name: workflow-lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # checkout + zizmor's online checks (impostor commits, known-vulnerable actions)
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+
+      - name: Render the template's workflows
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          uvx "copier==${COPIER_VERSION}" copy --trust --defaults --vcs-ref HEAD \
+            --data project_name=lint-sample . "$RUNNER_TEMP/lint-sample"
+
+      - name: actionlint
+        run: |
+          uvx --from "actionlint-py==${ACTIONLINT_VERSION}" actionlint \
+            .github/workflows/*.yml "$RUNNER_TEMP"/lint-sample/.github/workflows/*.yml
+
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uvx "zizmor==${ZIZMOR_VERSION}" --format=github \
+            .github/workflows "$RUNNER_TEMP/lint-sample/.github/workflows"

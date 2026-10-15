@@ -8,9 +8,12 @@ mai-platform/
 ├── template/              # Copier project template (rendered into new projects)
 ├── copier.yml             # template questions
 ├── renovate.json          # automated dependency PRs (see "Keeping the image current")
+├── SECURITY.md            # vulnerability reporting + image signature verification
+├── security/              # rulesets + script that applies the repo's GitHub security settings
 └── .github/
-    ├── workflows/image.yml     # build, smoke-test, push, sign, scan, prune ghcr.io/<owner>/mai-base
-    └── workflows/template.yml  # render template + run its tests inside the runtime image
+    ├── workflows/image.yml          # build, smoke-test, push, sign, scan, prune ghcr.io/<owner>/mai-base
+    ├── workflows/template.yml       # render template + run its tests inside the runtime image
+    └── workflows/workflow-lint.yml  # actionlint + zizmor on every workflow (incl. the template's)
 ```
 
 ## The idea
@@ -52,10 +55,9 @@ mai-platform/
    uvx copier copy --trust gh:christufa/mai-platform my-project
    ```
    Push it to GitHub and add the repo to the Renovate app's repository list so it gets image-release PRs.
-4. **Turn on automation** (one-time):
+4. **Turn on automation and protection** (one-time):
    - Install the [Renovate GitHub App](https://github.com/apps/renovate) on `mai-platform`. Its first PR, "Configure Renovate", confirms the setup; merge it.
-   - *Settings → Branches → Add rule* for `main`: require the `build (runtime, base)` and `build (dev, devel)` status checks. Auto-merge only ever merges a PR after these pass.
-   - *Settings → General → Allow auto-merge*: on.
+   - Run `powershell -ExecutionPolicy Bypass -File security\apply-repo-settings.ps1` (needs `gh` logged in as the owner). See [Security](#security).
 5. **Cloud (optional, when you need it):**
    ```bash
    uv tool install "skypilot[aws,gcp,runpod,lambda,kubernetes]"   # or use the one in the dev image
@@ -81,6 +83,23 @@ Safety nets on every build:
 - A cleanup job prunes untagged manifests, old `-sha-` tags (>30 days) and dated tags (>90 days). Release and rolling tags are never deleted. Cosign signatures and attestations are handled safely.
 
 **Tags and pinning.** `dev`/`runtime` always point at the newest build of main. `dev-2026.10.14`-style dated tags let you roll back to any recent weekly build. `dev-0.2.0` release tags never change. New projects pin the latest release by default (`image_version` in Copier, currently `0.1.0`; bump that default in `copier.yml` when you cut releases). Cut a release whenever a set of updates is worth adopting: `git tag v0.2.0 && git push --tags`.
+
+## Security
+
+`security/apply-repo-settings.ps1` applies everything below and is safe to re-run; edit the JSON in `security/` and re-run to change it.
+
+| Area | Setting |
+|---|---|
+| `main` (ruleset `protect-main`) | Changes only via squash-merged PRs; required checks `image-gate`, `template-gate`, `workflow-lint`; linear, signed history; no force-push or deletion. You (admin) can bypass the checks on a PR in an emergency, never push directly |
+| Release tags (`protect-release-tags`) | `v*` tags can't be moved or deleted, so `dev-0.1.0` always means the same thing |
+| Workflows | No token permissions by default (each job requests its own); actions SHA-pinned and allow-listed (`security/selected-actions.json`); fork PRs need your approval to run; fork PRs never push, sign or write the build cache |
+| Linting | `workflow-lint` runs actionlint + zizmor on every PR |
+| Scanning | Secret scanning + push protection, Dependabot alerts (Renovate opens the fixes), CodeQL, Grype scan of each image |
+| Reporting | Private vulnerability reporting ([SECURITY.md](SECURITY.md)) |
+
+The required checks are *gate* jobs that always report, even when a PR doesn't touch the image or template (those jobs are skipped, and the gate still passes). That's what makes it safe to require them with path-filtered workflows.
+
+Working with the ruleset: `git switch -c my-change` → commit → `git push -u origin my-change` → `gh pr create --fill` → `gh pr merge --auto --squash` (merges itself once checks pass).
 
 ## Day-to-day
 

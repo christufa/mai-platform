@@ -7,63 +7,121 @@
     ":dependencyDashboard"
   ],
   "timezone": "America/New_York",
-  "schedule": ["before 9am on monday"],
+  "schedule": [
+    "before 9am on monday"
+  ],
   "prConcurrentLimit": 5,
-  "labels": ["dependencies"],
-
+  "labels": [
+    "dependencies"
+  ],
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["before 9am on the first day of the month"],
+    "schedule": [
+      "before 9am on the first day of the month"
+    ],
     "commitMessageAction": "Refresh",
     "automerge": false
   },
-
   "packageRules": [
     {
       "description": "Python deps: keep >= ranges in pyproject.toml, bump only uv.lock",
-      "matchManagers": ["pep621"],
+      "matchManagers": [
+        "pep621"
+      ],
       "rangeStrategy": "update-lockfile"
     },
     {
       "description": "Patch updates auto-merge once the image build + smoke test pass",
-      "matchManagers": ["pep621"],
-      "matchUpdateTypes": ["patch"],
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
       "automerge": true
     },
     {
       "description": "One PR for the Hugging Face stack, which moves together",
-      "matchManagers": ["pep621"],
+      "matchManagers": [
+        "pep621"
+      ],
       "matchPackageNames": [
-        "transformers", "accelerate", "datasets", "tokenizers",
-        "huggingface-hub", "safetensors", "evaluate", "kernels"
+        "transformers",
+        "accelerate",
+        "datasets",
+        "tokenizers",
+        "huggingface-hub",
+        "safetensors",
+        "evaluate",
+        "kernels"
       ],
       "groupName": "hugging face stack"
     },
     {
       "description": "torch/CUDA moves are deliberate: listed on the dependency dashboard, PR only when you tick it",
-      "matchManagers": ["pep621"],
-      "matchPackageNames": ["torch", "torchvision", "triton"],
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchPackageNames": [
+        "torch",
+        "torchvision",
+        "triton"
+      ],
       "groupName": "pytorch",
       "dependencyDashboardApproval": true,
       "automerge": false
     },
     {
       "description": "GitHub Actions: pinned to commit SHAs; minor/patch/digest updates auto-merge",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github actions",
-      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pinDigest"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Workflow lint tools: patch/minor auto-merge once checks pass",
+      "matchDepNames": [
+        "actionlint-py",
+        "zizmor",
+        "copier"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
+      "groupName": "workflow lint tools",
       "automerge": true
     }
   ],
-
   "customManagers": [
     {
       "description": "Track the uv binary version pinned in the Dockerfile",
       "customType": "regex",
-      "managerFilePatterns": ["/^image/Dockerfile$/"],
-      "matchStrings": ["ARG UV_VERSION=(?<currentValue>\\S+)"],
+      "managerFilePatterns": [
+        "/^image/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "ARG UV_VERSION=(?<currentValue>\\S+)"
+      ],
       "depNameTemplate": "ghcr.io/astral-sh/uv",
       "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Tool versions pinned in workflows, annotated with '# renovate: datasource=... depName=...'",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\w+: \"(?<currentValue>[^\"]+)\""
+      ]
     }
   ]
 }

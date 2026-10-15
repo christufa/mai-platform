@@ -1,0 +1,15 @@
+{
+  "github_owned_allowed": true,
+  "verified_allowed": false,
+  "patterns_allowed": [
+    "astral-sh/setup-uv@*",
+    "docker/setup-buildx-action@*",
+    "docker/login-action@*",
+    "docker/metadata-action@*",
+    "docker/build-push-action@*",
+    "jlumbroso/free-disk-space@*",
+    "sigstore/cosign-installer@*",
+    "anchore/scan-action@*",
+    "dataaxiom/ghcr-cleanup-action@*"
+  ]
+}
