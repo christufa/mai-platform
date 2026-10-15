@@ -1,0 +1,206 @@
+name: image
+
+# Builds ghcr.io/<owner>/mai-base in two flavors (runtime, dev).
+#
+# Tags (per flavor, shown for runtime):
+#   runtime                rolling: newest build of main
+#   runtime-2026.10.14     immutable-ish: one per build day, for pinning/rollback
+#   runtime-0.2.0 / -0.2   release: push a git tag v0.2.0
+#   runtime-sha-abc1234    the commit a push-build came from
+#
+# Triggers:
+#   push to main (image/** changed)  build + push
+#   pull request                     build only (no push), runs smoke test
+#   weekly schedule                  full no-cache rebuild: fresh base image + apt upgrade
+#   v* tag                           release build
+#   manual                           workflow_dispatch (optionally no-cache)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+    paths: ["image/**", ".github/workflows/image.yml"]
+  pull_request:
+    paths: ["image/**", ".github/workflows/image.yml"]
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      no-cache:
+        description: Rebuild every layer (picks up OS security patches)
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mai-base
+  # ---- version pins: change here, nowhere else -------------------------------
+  CUDA_VERSION: "13.2.0"
+  UBUNTU_VERSION: "24.04"
+  PYTHON_VERSION: "3.12"
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lock-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - name: uv.lock is up to date with pyproject.toml
+        working-directory: image
+        run: uv lock --check
+
+  build:
+    needs: lock-check
+    runs-on: ubuntu-latest   # swap for a larger runner if builds get slow
+    permissions:
+      contents: read
+      packages: write
+      id-token: write          # keyless cosign signing
+      security-events: write   # upload vulnerability scan to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: runtime
+            variant: base
+          - target: dev
+            variant: devel
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' }}
+      NO_CACHE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.no-cache) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # CUDA images + torch are large; the default runner disk is not enough.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          large-packages: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ matrix.target }},enable={{is_default_branch}}
+            type=raw,value=${{ matrix.target }}-{{date 'YYYY.MM.DD'}},enable={{is_default_branch}}
+            type=semver,pattern={{version}},prefix=${{ matrix.target }}-
+            type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.target }}-
+            type=sha,prefix=${{ matrix.target }}-sha-,enable=${{ github.event_name == 'push' }}
+          labels: |
+            org.opencontainers.image.title=mai-base (${{ matrix.target }})
+            ai.mai.cuda-version=${{ env.CUDA_VERSION }}
+
+      # The smoke test (image/smoke_test.py) runs inside the build, so a broken
+      # image fails here and is never pushed.
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: image
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          pull: true                     # always start from the newest NVIDIA base
+          no-cache: ${{ env.NO_CACHE == 'true' }}
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CUDA_VERSION=${{ env.CUDA_VERSION }}
+            UBUNTU_VERSION=${{ env.UBUNTU_VERSION }}
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            BASE_VARIANT=${{ matrix.variant }}
+          # Registry cache: the GHA cache (10 GB) is too small for torch layers
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.target }}
+          cache-to: ${{ env.PUSH == 'true' && format('type=registry,ref={0}:buildcache-{1},mode=max', env.IMAGE, matrix.target) || '' }}
+          provenance: mode=max
+          sbom: true
+
+      - uses: sigstore/cosign-installer@v3
+        if: env.PUSH == 'true'
+
+      - name: Sign image
+        if: env.PUSH == 'true'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "${TAGS}" | xargs -I {} cosign sign --yes "{}@${DIGEST}"
+
+      # Grype scan of the pushed image. Reports to Security → Code scanning;
+      # does not fail the build (CUDA base images always carry some CVEs).
+      - name: Vulnerability scan
+        id: scan
+        if: env.PUSH == 'true'
+        uses: anchore/scan-action@v7
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          only-fixed: true
+          severity-cutoff: high
+          fail-build: false
+          output-format: sarif
+
+      - name: Upload scan results
+        if: env.PUSH == 'true' && steps.scan.outputs.sarif != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: mai-base-${{ matrix.target }}
+
+      - name: Summary
+        if: env.PUSH == 'true'
+        run: |
+          {
+            echo "### mai-base:${{ matrix.target }}"
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup:
+    # Prunes registry clutter after non-PR builds. Never touches release tags
+    # (runtime-0.2.0), rolling tags (runtime, dev) or the build cache.
+    # Run once with `dry-run: true` added if you want to see what it would delete.
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete untagged + orphaned manifests
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          package: mai-base
+          delete-untagged: true
+          delete-orphaned-images: true
+          delete-partial-images: true
+          older-than: 7 days
+      - name: Delete old sha- tags
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          package: mai-base
+          delete-tags: "*-sha-*"
+          older-than: 30 days
+      - name: Delete dated builds older than 90 days
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          package: mai-base
+          delete-tags: "runtime-20*,dev-20*"
+          older-than: 90 days

@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Data & artifacts (live in object storage / host mounts, never in git)
+data/
+datasets/
+models/
+checkpoints/
+outputs/
+runs/
+logs/
+wandb/
+mlruns/
+.cache/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.parquet
+*.h5
+*.hdf5
+*.pkl
+
+# Editors / OS
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~

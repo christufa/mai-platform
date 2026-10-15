@@ -1,0 +1,36 @@
+{%- set tag = ('dev-' ~ image_version) if image_version else 'dev' -%}
+# Local GPU dev environment. Started by VS Code "Reopen in Container".
+services:
+  dev:
+    image: {{ image_repo }}:{{ tag }}
+    init: true
+    command: sleep infinity
+
+    gpus: all
+    shm_size: 16gb          # PyTorch DataLoader workers need more than Docker's 64 MB default
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    mem_limit: ${MEMORY_LIMIT:-80g}
+
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      HF_HOME: /workspace/.cache/huggingface
+      TORCH_HOME: /workspace/.cache/torch
+      UV_CACHE_DIR: /workspace/.cache/uv
+      DATA_DIR: /workspace/data
+      CKPT_DIR: /workspace/outputs/checkpoints
+
+    volumes:
+      - ..:/workspace:cached
+      - {{ host_data_dir }}:/workspace/data:cached
+      - {{ host_cache_dir }}:/workspace/.cache:cached
+      # SkyPilot + cloud credentials so `make sky-*` works from inside the container.
+      # Comment out any you don't have; Docker creates missing host dirs empty.
+      - ${USERPROFILE:-~}/.sky:/home/devuser/.sky
+      - ${USERPROFILE:-~}/.aws:/home/devuser/.aws:ro
+      - ${USERPROFILE:-~}/.config/gcloud:/home/devuser/.config/gcloud:ro

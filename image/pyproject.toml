@@ -1,0 +1,62 @@
+# Dependency set baked into the base image. Not an installable package:
+# it exists so `uv lock` can resolve one reproducible environment.
+#
+#   Update a pin  -> edit here, then `uv lock` (or `uv lock --upgrade-package torch`)
+#   Upgrade all   -> `uv lock --upgrade`
+#
+# The resulting uv.lock is what CI builds from (`uv sync --locked`), and the
+# image exports it to /opt/mai/constraints.txt so project installs can't
+# silently drift torch/CUDA away from what the image was tested with.
+
+[project]
+name = "mai-base"
+version = "0.1.0"
+description = "Locked Python environment for the mai GPU base image"
+requires-python = "==3.12.*"
+
+dependencies = [
+    # --- Core DL stack (PyPI Linux wheels ship CUDA 13 libraries) ---
+    "torch==2.14.1",
+    "torchvision==0.29.1",
+    "triton",                 # pulled by torch; listed so it is visible in the lock
+
+    # --- Hugging Face ---
+    "transformers>=5.19",
+    "accelerate>=1.15",
+    "datasets>=5.1",
+    "tokenizers",
+    "huggingface-hub[hf-xet]",
+    "safetensors",
+    "evaluate>=0.4.6",
+    "kernels>=0.12.3",
+
+    # --- Numerics / data ---
+    "numpy>=2.3",
+    "scipy>=1.17",
+    "scikit-learn>=1.8",
+    "pandas",
+    "pyarrow",
+
+    # --- Experiment plumbing ---
+    "wandb>=0.30",
+    "pyyaml",
+    "rich",
+]
+
+[dependency-groups]
+# Installed only in the `dev` image target.
+dev = [
+    "jupyterlab>=4.6",
+    "jupyterlab-git",
+    "ipywidgets>=8.1",
+    "ipykernel",
+    "matplotlib>=3.10",
+    "plotly>=6.7",
+    "array-to-latex>=0.92",
+    "ruff",
+    "pytest",
+    "pre-commit",
+]
+
+[tool.uv]
+package = false

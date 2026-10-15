@@ -1,0 +1,79 @@
+# Copier template for mai GPU/ML projects.
+#
+#   New project:     uvx copier copy gh:christufa/mai-platform my-project
+#   Pull updates:    cd my-project && uvx copier update
+#   Pin a version:   uvx copier copy --vcs-ref v0.2.0 gh:christufa/mai-platform my-project
+
+_min_copier_version: "9.4"
+_subdirectory: template
+_templates_suffix: .jinja
+_answers_file: .copier-answers.yml
+
+project_name:
+  type: str
+  help: Project name (used for repo, W&B project, SkyPilot job names)
+  default: my-project
+  validator: "{% if not (project_name | regex_search('^[a-z][a-z0-9-]*$')) %}Use lowercase letters, digits and dashes{% endif %}"
+
+package_name:
+  type: str
+  help: Python import name
+  default: "{{ project_name | replace('-', '_') }}"
+  validator: "{% if not (package_name | regex_search('^[a-z_][a-z0-9_]*$')) %}Must be a valid Python identifier{% endif %}"
+
+description:
+  type: str
+  default: "A GPU training project"
+
+author_name:
+  type: str
+  default: Chris
+
+github_owner:
+  type: str
+  help: GitHub user/org that owns the mai-platform image
+  default: christufa
+
+image_repo:
+  type: str
+  help: Base image repository (without tag)
+  default: "ghcr.io/{{ github_owner }}/mai-base"
+
+image_version:
+  type: str
+  help: >-
+    Base image release to pin (e.g. 0.1.0). Renovate opens a PR in the project when a
+    newer release exists. Leave empty to float on the rolling :dev / :runtime tags (no PRs).
+  default: "0.1.0"
+  validator: "{% if image_version and not (image_version | regex_search('^\\d+\\.\\d+\\.\\d+$')) %}Use a release like 0.1.0, or leave empty{% endif %}"
+
+host_data_dir:
+  type: str
+  help: Host folder mounted at /workspace/data in the local devcontainer
+  default: "C:/data"
+
+host_cache_dir:
+  type: str
+  help: Host folder for shared HF/torch caches (shared across projects)
+  default: "C:/Users/chris/dev/.cache"
+
+bucket_uri:
+  type: str
+  help: "Object-store root for cloud runs (s3://, gs://, r2://). Holds data/ and checkpoints/"
+  default: "r2://{{ project_name }}"
+
+use_wandb:
+  type: bool
+  help: Log to Weights & Biases?
+  default: true
+
+wandb_entity:
+  type: str
+  help: W&B entity (user or team). Empty = your default entity
+  default: ""
+  when: "{{ use_wandb }}"
+
+default_accelerators:
+  type: str
+  help: "SkyPilot GPU candidates, cheapest available wins"
+  default: "{H100:1, A100-80GB:1, L40S:1}"

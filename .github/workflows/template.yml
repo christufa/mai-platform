@@ -1,0 +1,38 @@
+name: template
+
+# Renders the Copier template with default answers and runs the generated
+# project's lint + tests inside the published runtime image.
+
+on:
+  push:
+    branches: [main]
+    paths: ["template/**", "copier.yml", ".github/workflows/template.yml"]
+  pull_request:
+    paths: ["template/**", "copier.yml", ".github/workflows/template.yml"]
+  workflow_dispatch:
+
+jobs:
+  render-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/mai-base:runtime
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Render template
+        run: |
+          uvx copier copy --trust --defaults --vcs-ref HEAD \
+            --data project_name=ci-sample . /tmp/ci-sample
+      - name: Install, lint, test
+        working-directory: /tmp/ci-sample
+        run: |
+          uv pip install --python /opt/venv/bin/python -c "$MAI_CONSTRAINTS" -e . pytest ruff
+          ruff check . && ruff format --check .
+          pytest
+          python -m ci_sample.train --config configs/smoke.yaml

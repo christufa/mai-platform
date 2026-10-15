@@ -1,0 +1,47 @@
+{%- set tag = ('dev-' ~ image_version) if image_version else 'dev' -%}
+# Interactive cloud GPU box running the same dev image as your local devcontainer.
+#
+#   sky launch -c {{ project_name }}-dev sky/dev.yaml -i 30 --down   # autostop+teardown after 30 idle min
+#   ssh {{ project_name }}-dev                                       # or VS Code Remote-SSH to that host
+#   sky down {{ project_name }}-dev
+#
+# Code lives in ~/sky_workdir (synced from here on launch; re-sync with `sky exec`).
+
+name: {{ project_name }}-dev
+
+resources:
+  image_id: docker:{{ image_repo }}:{{ tag }}
+  accelerators: {{ default_accelerators }}
+  use_spot: false        # interactive work: don't get preempted mid-debug
+  disk_size: 200
+  ports: 8888            # Jupyter
+
+workdir: .
+
+envs:
+  DATA_DIR: /data
+  CKPT_DIR: /ckpt
+  WANDB_PROJECT: {{ project_name }}
+
+secrets:
+  WANDB_API_KEY: null
+  HF_TOKEN: null
+
+file_mounts:
+  /data:
+    source: {{ bucket_uri }}/data
+    mode: MOUNT
+  /ckpt:
+    source: {{ bucket_uri }}/checkpoints
+    mode: MOUNT_CACHED
+
+setup: |
+  source /etc/profile.d/mai.sh
+  uv pip install -c "$MAI_CONSTRAINTS" -e '.[dev]'
+
+run: |
+  source /etc/profile.d/mai.sh
+  nvidia-smi
+  jupyter lab --no-browser --ip=0.0.0.0 --port=8888 --ServerApp.root_dir="$HOME/sky_workdir" \
+    > ~/jupyter.log 2>&1 &
+  echo "Jupyter starting; get the token with: ssh {{ project_name }}-dev 'grep token ~/jupyter.log'"

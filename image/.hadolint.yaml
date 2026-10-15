@@ -1,0 +1,6 @@
+# Lint config for the base image Dockerfile: `hadolint image/Dockerfile`
+ignored:
+  - DL3008  # apt versions unpinned on purpose: weekly no-cache rebuilds pick up security fixes
+  - DL3064  # false positive: flags ARG USERNAME as "sensitive"
+  - SC2016  # single quotes in /etc/profile.d/mai.sh are intentional ($PATH expands at login)
+  - DL3066  # USER by name is fine: the user is created in this image

@@ -1,0 +1,31 @@
+{%- set tag = ('runtime-' ~ image_version) if image_version else 'runtime' -%}
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Tests run inside the same image the cloud jobs use (CPU-only here).
+    container:
+      image: {{ image_repo }}:{{ tag }}
+      options: --user root
+{%- raw %}
+      credentials:              # needed while the GHCR package is private
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install
+        run: uv pip install --python /opt/venv/bin/python -c "$MAI_CONSTRAINTS" -e . pytest ruff
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Test
+        run: pytest
+{%- endraw %}

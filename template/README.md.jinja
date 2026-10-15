@@ -1,0 +1,71 @@
+{%- set dev_tag = ('dev-' ~ image_version) if image_version else 'dev' -%}
+# {{ project_name }}
+
+{{ description }}
+
+Generated from [mai-platform](https://github.com/{{ github_owner }}/mai-platform).
+Base image: `{{ image_repo }}:{{ dev_tag }}`.
+
+## Local (your GPU)
+
+1. Copy `.env.example` to `.env` and fill in the keys.
+2. Open the folder in VS Code and choose **Reopen in Container**.
+3. Inside the container:
+
+```bash
+make doctor        # image smoke test + GPU visible? (also runs on container start)
+make train-smoke   # seconds-long sanity check
+make test
+make train         # torchrun across all local GPUs, configs/default.yaml
+make train ARGS="lr=1e-3 run_name=lr1e-3"
+```
+
+Host mounts: `{{ host_data_dir }}` → `/workspace/data`, `{{ host_cache_dir }}` → `/workspace/.cache`.
+
+## Cloud (SkyPilot)
+
+One-time: `sky check` to see which clouds are enabled (credentials in `~/.aws`, `~/.config/gcloud`, RunPod/Lambda API keys, etc.).
+Create the bucket `{{ bucket_uri }}` with `data/` and `checkpoints/` prefixes.
+
+```bash
+make sky-train                                       # managed spot job, auto-resumes on preemption
+sky jobs launch sky/train.yaml --env RUN_NAME=exp2 --gpus H100:8 --secret WANDB_API_KEY
+make sky-dev                                         # interactive GPU box, same dev image
+make sky-status
+```
+
+Checkpoints land in `{{ bucket_uri }}/checkpoints/<run_name>/`. Relaunching with the same `RUN_NAME` resumes.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/{{ package_name }}/train.py` | DDP training loop, AMP, SIGTERM-safe checkpointing, resume |
+| `src/{{ package_name }}/model.py` | **Replace:** toy model and synthetic data |
+| `configs/*.yaml` | Run configs; override any key with `key=value` |
+| `sky/train.yaml`, `sky/dev.yaml` | Cloud job / dev box definitions |
+| `.devcontainer/` | Local GPU container |
+
+## Dependencies
+
+torch/CUDA come locked from the base image. Add project deps to `pyproject.toml`, then `make install`;
+installs use `-c $MAI_CONSTRAINTS` so they can never change the image's torch version.
+
+## Base image updates
+
+{% if image_version -%}
+This project pins `{{ image_repo }}` release **{{ image_version }}** (`dev-{{ image_version }}` locally,
+`runtime-{{ image_version }}` in the cloud and CI). With the [Renovate app](https://github.com/apps/renovate)
+installed on this repo, a newer mai-base release arrives as one PR that bumps every reference together:
+`.devcontainer/compose.yaml`, `sky/*.yaml` and `.github/workflows/ci.yml`. CI runs your tests on the new image
+before you merge. After merging, rebuild the devcontainer to pick it up locally.
+{%- else -%}
+This project floats on the rolling `dev` / `runtime` tags, so it always gets the newest mai-base build
+(re-pull with *Dev Containers: Rebuild Container*). To pin a release instead: `uvx copier update --data image_version=0.1.0`.
+{%- endif %}
+
+## Template updates
+
+```bash
+uvx copier update      # pulls newer mai-platform template changes, 3-way merges with yours
+```

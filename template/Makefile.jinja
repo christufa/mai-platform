@@ -1,0 +1,40 @@
+# Run these inside the devcontainer (or any mai-base image).
+PKG     := {{ package_name }}
+PROJECT := {{ project_name }}
+CONFIG ?= configs/default.yaml
+NGPU   ?= $(shell python -c "import torch; print(max(torch.cuda.device_count(), 1))")
+ARGS   ?=
+
+.PHONY: doctor install lint fmt test train train-smoke sky-train sky-dev sky-status
+
+doctor:             ## is this environment healthy? (image smoke test + GPU check)
+	python /opt/mai/smoke_test.py
+	python -c "import torch; assert torch.cuda.is_available(), 'no GPU visible'; \
+	  [print(f'GPU {i}: {torch.cuda.get_device_name(i)}') for i in range(torch.cuda.device_count())]"
+
+install:            ## editable install, held to the base image's locked versions
+	uv pip install -c $$MAI_CONSTRAINTS -e '.[dev]'
+
+lint:
+	ruff check . && ruff format --check .
+
+fmt:
+	ruff check --fix . && ruff format .
+
+test:
+	pytest
+
+train:              ## local training on all visible GPUs
+	torchrun --standalone --nproc-per-node=$(NGPU) -m $(PKG).train --config $(CONFIG) $(ARGS)
+
+train-smoke:        ## seconds-long CPU/GPU sanity run
+	python -m $(PKG).train --config configs/smoke.yaml $(ARGS)
+
+sky-train:          ## managed (spot, auto-recovering) cloud job
+	sky jobs launch sky/train.yaml --secret WANDB_API_KEY --secret HF_TOKEN -y
+
+sky-dev:            ## interactive cloud GPU box, autostops after 30 idle minutes
+	sky launch -c $(PROJECT)-dev sky/dev.yaml -i 30 --down -y
+
+sky-status:
+	sky status && sky jobs queue

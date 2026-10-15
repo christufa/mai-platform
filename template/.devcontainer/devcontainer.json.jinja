@@ -1,0 +1,46 @@
+{
+  "name": "{{ project_name }}",
+  "dockerComposeFile": "compose.yaml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "devuser",
+
+  // Editable install, held to the image's locked torch/CUDA versions
+  "postCreateCommand": "uv pip install -c $MAI_CONSTRAINTS -e '.[dev]' && (pre-commit install || true)",
+  "postStartCommand": "make doctor || echo 'make doctor failed: see output above'",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.datawrangler",
+        "redhat.vscode-yaml",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.terminal.activateEnvironment": false,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
+          }
+        },
+        "jupyter.notebookFileRoot": "/workspace",
+        "editor.rulers": [100],
+        "files.trimTrailingWhitespace": true,
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      }
+    }
+  }
+}

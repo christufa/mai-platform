@@ -1,0 +1,68 @@
+{%- set tag = ('runtime-' ~ image_version) if image_version else 'runtime' -%}
+# Managed cloud training job (spot by default, auto-recovers from preemption).
+#
+#   sky jobs launch sky/train.yaml --secret WANDB_API_KEY --secret HF_TOKEN
+#   sky jobs launch sky/train.yaml --env RUN_NAME=lr-sweep-1 --gpus H100:8
+#   sky jobs launch sky/train.yaml --num-nodes 2 --gpus H100:8        # multi-node
+#   sky jobs queue / sky jobs logs <id> / sky jobs cancel <id>
+#
+# On preemption SkyPilot relaunches wherever GPUs are available; train.py
+# resumes from the newest checkpoint in /ckpt/<RUN_NAME>.
+
+name: {{ project_name }}-train
+
+resources:
+  image_id: docker:{{ image_repo }}:{{ tag }}
+  accelerators: {{ default_accelerators }}
+  use_spot: true
+  disk_size: 200
+  # infra: runpod          # or aws, gcp, k8s, lambda ... omit to search all enabled clouds
+  job_recovery:
+    max_restarts_on_errors: 2   # also retry on user-code failures, not just preemption
+
+num_nodes: 1
+
+workdir: .
+
+envs:
+  RUN_NAME: baseline
+  CONFIG: configs/default.yaml
+  DATA_DIR: /data
+  CKPT_DIR: /ckpt
+  WANDB_PROJECT: {{ project_name }}
+{%- if wandb_entity %}
+  WANDB_ENTITY: {{ wandb_entity }}
+{%- endif %}
+
+# Values come from your local shell env when passed with --secret NAME;
+# they are redacted in SkyPilot logs/dashboard.
+secrets:
+  WANDB_API_KEY: null
+  HF_TOKEN: null
+  # Needed only while the GHCR image is private:
+  # SKYPILOT_DOCKER_USERNAME: null
+  # SKYPILOT_DOCKER_PASSWORD: null
+  # SKYPILOT_DOCKER_SERVER: ghcr.io
+
+file_mounts:
+  /data:
+    source: {{ bucket_uri }}/data
+    mode: MOUNT
+  /ckpt:
+    source: {{ bucket_uri }}/checkpoints
+    mode: MOUNT_CACHED   # local-disk write speed, async upload to the bucket
+
+setup: |
+  source /etc/profile.d/mai.sh
+  uv pip install -c "$MAI_CONSTRAINTS" -e .
+
+run: |
+  source /etc/profile.d/mai.sh
+  MASTER_ADDR=$(echo "$SKYPILOT_NODE_IPS" | head -n1)
+  torchrun \
+    --nnodes="$SKYPILOT_NUM_NODES" \
+    --nproc-per-node="$SKYPILOT_NUM_GPUS_PER_NODE" \
+    --node-rank="$SKYPILOT_NODE_RANK" \
+    --master-addr="$MASTER_ADDR" \
+    --master-port=29500 \
+    -m {{ package_name }}.train --config "$CONFIG" run_name="$RUN_NAME"

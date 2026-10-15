@@ -1,0 +1,25 @@
+# Default training config. Override any field on the command line:
+#   python -m <pkg>.train --config configs/default.yaml lr=1e-3 max_steps=5000
+run_name: baseline
+seed: 0
+
+# model (toy MLP — replace with your own in model.py)
+d_in: 64
+d_hidden: 512
+n_layers: 4
+
+# optimisation
+max_steps: 5000
+batch_size: 256
+lr: 3.0e-4
+weight_decay: 0.01
+warmup_steps: 200
+grad_clip: 1.0
+precision: bf16        # bf16 | fp16 | fp32
+compile: false
+
+# bookkeeping
+log_every: 50
+ckpt_every: 500        # cheap, frequent checkpoints are what make spot instances safe
+keep_last: 3
+wandb: true

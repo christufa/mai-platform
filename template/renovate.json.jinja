@@ -1,0 +1,54 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Keeps this project on the latest mai-base release and current CI actions / pre-commit hooks.",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigestsToSemver"],
+  "timezone": "America/New_York",
+  "schedule": ["before 9am on monday"],
+  "labels": ["dependencies"],
+  "pre-commit": { "enabled": true },
+
+  "packageRules": [
+    {
+      "description": "mai-base is bumped by the custom manager below, as one PR across all files",
+      "matchManagers": ["docker-compose", "github-actions"],
+      "matchDepNames": ["{{ image_repo }}"],
+      "enabled": false
+    },
+    {
+      "description": "mai-base releases: dev-X.Y.Z / runtime-X.Y.Z move together; ignore dated and X.Y tags",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["{{ image_repo }}"],
+      "groupName": "mai-base image",
+      "versioning": "regex:^(?<compatibility>dev|runtime)-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+      "allowedVersions": "/^(dev|runtime)-\\d{1,3}\\.\\d+\\.\\d+$/",
+      "automerge": false
+    },
+    {
+      "description": "GitHub Actions: pinned to SHAs; minor/patch/digest updates auto-merge once CI passes",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "github actions",
+      "automerge": true
+    },
+    {
+      "description": "pre-commit hooks (ruff etc.)",
+      "matchManagers": ["pre-commit"],
+      "groupName": "pre-commit hooks",
+      "automerge": true
+    }
+  ],
+
+  "customManagers": [
+    {
+      "description": "Pinned mai-base tags in the devcontainer, SkyPilot files and CI",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.devcontainer/compose\\.yaml$/",
+        "/^sky/[^/]+\\.yaml$/",
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": ["(?<depName>{{ image_repo | replace('.', '\\\\.') }}):(?<currentValue>(?:dev|runtime)-\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

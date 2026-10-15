@@ -1,0 +1,42 @@
+[project]
+name = "{{ project_name }}"
+version = "0.1.0"
+description = "{{ description }}"
+authors = [{ name = "{{ author_name }}" }]
+requires-python = ">=3.12"
+readme = "README.md"
+
+# torch & friends are provided by the base image. They are listed (unpinned)
+# so the package is honest about what it needs; installs run with
+# `-c $MAI_CONSTRAINTS`, which holds them at the image's locked versions.
+dependencies = [
+    "torch",
+    "pyyaml",
+{%- if use_wandb %}
+    "wandb",
+{%- endif %}
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "pre-commit"]
+
+[project.scripts]
+{{ project_name }}-train = "{{ package_name }}.train:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{ package_name }}"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

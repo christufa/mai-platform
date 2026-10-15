@@ -1,0 +1,14 @@
+# Seconds-long sanity run (CPU or GPU). Used by `make train-smoke` and CI.
+run_name: smoke
+d_in: 16
+d_hidden: 64
+n_layers: 2
+max_steps: 60
+batch_size: 64
+lr: 3.0e-3
+warmup_steps: 5
+precision: fp32
+log_every: 20
+ckpt_every: 25
+keep_last: 2
+wandb: false

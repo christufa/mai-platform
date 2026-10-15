@@ -1,0 +1,5 @@
+# Allow-list: the build context only needs the lock inputs and the smoke test.
+*
+!pyproject.toml
+!uv.lock
+!smoke_test.py
