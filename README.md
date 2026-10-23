@@ -1,6 +1,6 @@
 # mai-platform
 
-One repo for the GPU/ML dev platform. It replaces `mai-base-image` and `mai-project-template`.
+One repo for the GPU/ML dev platform.
 
 ```
 mai-platform/
