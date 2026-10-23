@@ -44,7 +44,7 @@ image_version:
   help: >-
     Base image release to pin (e.g. 0.1.0). Renovate opens a PR in the project when a
     newer release exists. Leave empty to float on the rolling :dev / :runtime tags (no PRs).
-  default: "0.1.0"
+  default: "0.2.0"
   validator: "{% if image_version and not (image_version | regex_search('^\\d+\\.\\d+\\.\\d+$')) %}Use a release like 0.1.0, or leave empty{% endif %}"
 
 host_data_dir:

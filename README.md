@@ -82,7 +82,7 @@ Safety nets on every build:
 - A Grype vulnerability scan of each pushed image appears under **Security → Code scanning** (fixed, high+ only; it reports and never blocks).
 - A cleanup job prunes untagged manifests, old `-sha-` tags (>30 days) and dated tags (>90 days). Release and rolling tags are never deleted. Cosign signatures and attestations are handled safely.
 
-**Tags and pinning.** `dev`/`runtime` always point at the newest build of main. `dev-2026.10.14`-style dated tags let you roll back to any recent weekly build. `dev-0.2.0` release tags never change. New projects pin the latest release by default (`image_version` in Copier, currently `0.1.0`; bump that default in `copier.yml` when you cut releases). Cut a release whenever a set of updates is worth adopting: `git tag v0.2.0 && git push --tags`.
+**Tags and pinning.** `dev`/`runtime` always point at the newest build of main. `dev-2026.10.14`-style dated tags let you roll back to any recent weekly build. `dev-0.2.0` release tags never change. New projects pin the latest release by default (`image_version` in Copier, currently `0.2.0`; bump that default in `copier.yml` when you cut releases). Cut a release whenever a set of updates is worth adopting: `git tag v0.2.0 && git push --tags`.
 
 ## Security
 
