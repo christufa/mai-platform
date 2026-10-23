@@ -34,7 +34,9 @@ make sky-dev                                         # interactive GPU box, same
 make sky-status
 ```
 
-Checkpoints land in `{{ bucket_uri }}/checkpoints/<run_name>/`. Relaunching with the same `RUN_NAME` resumes.
+Checkpoints land in `{{ bucket_uri }}/checkpoints/<run_name>/`. Relaunching with the same `RUN_NAME` resumes
+(you may raise `max_steps`). If anything else in the config changed, training refuses to start: give each
+experiment its own `RUN_NAME`.
 
 ## Layout
 

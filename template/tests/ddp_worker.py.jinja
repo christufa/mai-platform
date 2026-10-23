@@ -1,0 +1,28 @@
+"""torchrun entrypoint for the DDP tests in test_smoke.py.
+
+Runs the normal training entrypoint. If FAKE_SIGTERM_RANK is set, that rank
+alone sees a SIGTERM after FAKE_SIGTERM_AFTER steps, which is what a spot
+reclaim looks like when the signal reaches ranks at different times.
+"""
+
+import os
+import sys
+
+from {{ package_name }} import train
+
+
+class _OneRankPreemption:
+    def __init__(self) -> None:
+        self._checks = 0
+        self._after = int(os.environ["FAKE_SIGTERM_AFTER"])
+
+    @property
+    def requested(self) -> bool:
+        self._checks += 1  # train() checks once per step
+        return self._checks > self._after
+
+
+if os.environ.get("FAKE_SIGTERM_RANK") == os.environ["RANK"]:
+    train._Preemption = _OneRankPreemption
+
+train.main(sys.argv[1:])

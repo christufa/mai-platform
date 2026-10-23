@@ -1,16 +1,62 @@
-"""Fast CPU checks: training reduces loss, checkpoints resume correctly."""
+"""Fast CPU checks: training reduces loss, checkpoints resume correctly,
+and 2-process DDP runs finish and stop cleanly on preemption."""
 
+import contextlib
+import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 from {{ package_name }}.checkpoint import load_latest
 from {{ package_name }}.config import load_config
 from {{ package_name }}.train import train
 
-SMOKE = Path(__file__).parents[1] / "configs" / "smoke.yaml"
+TESTS = Path(__file__).parent
+SMOKE = TESTS.parent / "configs" / "smoke.yaml"
 
 
 def _cfg(tmp_path, *overrides):
     return load_config(["--config", str(SMOKE), f"ckpt_dir={tmp_path}", *overrides])
+
+
+def _process_tree(root: int) -> list[int]:
+    """`root` and all its descendants (Linux /proc). torchrun starts each worker
+    in its own session, so killing torchrun's process group would miss them."""
+    parents = {}
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        with contextlib.suppress(OSError, ValueError, IndexError):
+            pid, rest = stat.read_text().split(" (", 1)
+            parents[int(pid)] = int(rest.rsplit(") ", 1)[1].split()[1])
+    tree = [root]
+    for pid in tree:  # grows while we walk it
+        tree += [child for child, parent in parents.items() if parent == pid]
+    return tree
+
+
+def _torchrun(tmp_path, *overrides, timeout=180, **env):
+    """2 CPU processes (gloo) via torchrun. A hang fails the test instead of CI."""
+    cmd = [
+        sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
+        str(TESTS / "ddp_worker.py"), "--config", str(SMOKE), f"ckpt_dir={tmp_path}", *overrides,
+    ]  # fmt: skip
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "GLOO_SOCKET_IFNAME": "lo", **env}
+    log = tmp_path / "torchrun.log"  # a file, not a pipe: stuck workers can't block reading it
+    with log.open("w") as f:
+        proc = subprocess.Popen(cmd, env=env, stdout=f, stderr=subprocess.STDOUT)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            for pid in reversed(_process_tree(proc.pid)):
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+            proc.wait()
+            pytest.fail(f"torchrun hung for {timeout}s:\n{log.read_text()}")
+    out = log.read_text()
+    assert proc.returncode == 0, out
+    return out
 
 
 def test_loss_decreases(tmp_path):
@@ -30,5 +76,41 @@ def test_resume_continues_from_checkpoint(tmp_path):
 
 
 def test_overrides_are_typed(tmp_path):
-    cfg = _cfg(tmp_path, "lr=1", "compile=true")
-    assert cfg.lr == 1.0 and cfg.compile is True
+    cfg = _cfg(tmp_path, "lr=1", "compile=true", "run_name=123")
+    assert cfg.lr == 1.0 and cfg.compile is True and cfg.run_name == "123"
+
+
+def test_scientific_notation_override(tmp_path):
+    # YAML reads "1e-3" (no dot) as a string; float fields must still accept it.
+    assert _cfg(tmp_path, "lr=1e-3").lr == 1e-3
+
+
+def test_resume_refuses_a_changed_config(tmp_path):
+    train(_cfg(tmp_path, "max_steps=10"))
+    with pytest.raises(ValueError, match="lr"):
+        train(_cfg(tmp_path, "max_steps=20", "lr=1e-2"))
+
+
+def test_fresh_run_gets_a_new_wandb_id(tmp_path):
+    train(_cfg(tmp_path, "max_steps=10", "run_name=a"))
+    train(_cfg(tmp_path, "max_steps=10", "run_name=b"))
+    a, b = load_latest(tmp_path / "a"), load_latest(tmp_path / "b")
+    assert a["run_id"] != b["run_id"]
+
+    train(_cfg(tmp_path, "max_steps=20", "run_name=a"))  # resume keeps the id
+    assert load_latest(tmp_path / "a")["run_id"] == a["run_id"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="torchrun/gloo test runs on Linux (CI)")
+def test_ddp_two_processes(tmp_path):
+    _torchrun(tmp_path, "max_steps=40")
+    assert load_latest(tmp_path / "smoke")["step"] == 40
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="torchrun/gloo test runs on Linux (CI)")
+def test_ddp_preemption_on_one_rank_stops_all(tmp_path):
+    # Only rank 1 sees SIGTERM. Every rank must stop at the same step and
+    # checkpoint, instead of rank 0 training on while rank 1 waits.
+    out = _torchrun(tmp_path, "max_steps=200", FAKE_SIGTERM_RANK="1", FAKE_SIGTERM_AFTER="10")
+    assert "SIGTERM: checkpointed" in out
+    assert load_latest(tmp_path / "smoke")["step"] == 11

@@ -14,6 +14,7 @@ import math
 import os
 import signal
 import time
+import uuid
 
 import torch
 import torch.distributed as dist
@@ -21,7 +22,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
 from . import checkpoint
-from .config import TrainConfig, load_config
+from .config import TrainConfig, check_resumable, load_config
 from .model import build_dataset, build_model
 
 _DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}
@@ -37,6 +38,17 @@ class _Preemption:
 
     def _handle(self, *_: object) -> None:
         self.requested = True
+
+
+def _any_rank(flag: bool, world: int, device: torch.device) -> bool:
+    """True on every rank if any rank says so. Ranks get SIGTERM at different
+    steps; acting on a local flag would leave one rank in the checkpoint barrier
+    while the others wait in DDP's gradient sync, and the job hangs."""
+    if world == 1:
+        return flag
+    t = torch.tensor(float(flag), device=device)
+    dist.all_reduce(t, op=dist.ReduceOp.MAX)
+    return bool(t.item())
 
 
 def _setup_distributed() -> tuple[int, int, torch.device]:
@@ -65,19 +77,20 @@ def _lr_lambda(cfg: TrainConfig):
     return fn
 
 
-def _init_wandb(cfg: TrainConfig, rank: int):
+def _init_wandb(cfg: TrainConfig, rank: int, run_id: str):
     if rank != 0 or not cfg.wandb or not os.environ.get("WANDB_API_KEY"):
         return None
     try:
         import wandb
     except ImportError:
         return None
-    # Stable id => a resumed spot job keeps logging to the same W&B run.
+    # The id is stored in the checkpoint, so a resumed spot job keeps logging to
+    # the same W&B run, while a fresh run that reuses a run_name gets a new one.
     return wandb.init(
         project=os.environ.get("WANDB_PROJECT"),
         entity=os.environ.get("WANDB_ENTITY") or None,
         name=cfg.run_name,
-        id=cfg.run_name,
+        id=run_id,
         resume="allow",
         config=vars(cfg),
     )
@@ -100,15 +113,20 @@ def train(cfg: TrainConfig) -> dict[str, float]:
     scaler = torch.amp.GradScaler(device.type, enabled=dtype is torch.float16)
 
     step = 0
+    run_id = uuid.uuid4().hex[:12]
     state = checkpoint.load_latest(cfg.run_dir, map_location=device)
     if state is not None:
+        check_resumable(state["config"], cfg)
         raw_model.load_state_dict(state["model"])
         opt.load_state_dict(state["optimizer"])
         sched.load_state_dict(state["scheduler"])
         scaler.load_state_dict(state["scaler"])
         step = state["step"]
+        run_id = state.get("run_id", run_id)
         if is_main:
             print(f"Resumed from step {step} ({cfg.run_dir})", flush=True)
+    elif is_main:
+        print(f"Starting {cfg.run_name} from scratch ({cfg.run_dir})", flush=True)
 
     if cfg.compile:
         model = torch.compile(model)
@@ -129,7 +147,7 @@ def train(cfg: TrainConfig) -> dict[str, float]:
     )
     steps_per_epoch = len(loader)
 
-    run = _init_wandb(cfg, rank)
+    run = _init_wandb(cfg, rank, run_id)
     preempt = _Preemption()
 
     def save_ckpt() -> None:
@@ -139,6 +157,7 @@ def train(cfg: TrainConfig) -> dict[str, float]:
                 step,
                 {
                     "step": step,
+                    "run_id": run_id,
                     "model": raw_model.state_dict(),
                     "optimizer": opt.state_dict(),
                     "scheduler": sched.state_dict(),
@@ -152,8 +171,9 @@ def train(cfg: TrainConfig) -> dict[str, float]:
 
     model.train()
     loss_val = float("nan")
+    preempted = False
     t0 = time.perf_counter()
-    while step < cfg.max_steps:
+    while step < cfg.max_steps and not preempted:
         epoch = step // steps_per_epoch
         if sampler is not None:
             sampler.set_epoch(epoch)
@@ -183,15 +203,16 @@ def train(cfg: TrainConfig) -> dict[str, float]:
                     if run:
                         run.log({"loss": loss_val, "lr": lr}, step=step)
 
-            stop = preempt.requested or step >= cfg.max_steps
+            # Every rank must make the same stop decision at the same step.
+            preempted = _any_rank(preempt.requested, world, device)
+            stop = preempted or step >= cfg.max_steps
             if step % cfg.ckpt_every == 0 or stop:
                 save_ckpt()
             if stop:
                 break
-        if preempt.requested:
-            if is_main:
-                print(f"SIGTERM: checkpointed at step {step}, exiting for recovery", flush=True)
-            break
+
+    if preempted and is_main:
+        print(f"SIGTERM: checkpointed at step {step}, exiting for recovery", flush=True)
 
     if run:
         run.finish()
