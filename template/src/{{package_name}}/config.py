@@ -7,6 +7,7 @@ environment (DATA_DIR, CKPT_DIR) so the same config file runs everywhere.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import os
 from dataclasses import dataclass, field
@@ -50,12 +51,13 @@ class TrainConfig:
         return Path(self.ckpt_dir) / self.run_name
 
 
-def _coerce(name: str, raw: str, current: object) -> object:
-    value = yaml.safe_load(raw)
-    if isinstance(current, float) and isinstance(value, int):
-        value = float(value)
+def _coerce(name: str, value: object, current: object) -> object:
+    """Match `value` to the field's type. YAML reads `1e-3` (no dot) as a string."""
+    if isinstance(current, float) and not isinstance(value, bool):
+        with contextlib.suppress(TypeError, ValueError):
+            value = float(value)
     if current is not None and not isinstance(value, type(current)):
-        raise TypeError(f"{name}: expected {type(current).__name__}, got {raw!r}")
+        raise TypeError(f"{name}: expected {type(current).__name__}, got {value!r}")
     return value
 
 
@@ -74,10 +76,45 @@ def load_config(argv: list[str] | None = None) -> TrainConfig:
     if unknown:
         raise KeyError(f"Unknown config keys in {args.config}: {sorted(unknown)}")
 
-    cfg = TrainConfig(**values)
+    cfg = TrainConfig()
+    for key, value in values.items():
+        setattr(cfg, key, _coerce(key, value, getattr(cfg, key)))
     for item in args.overrides:
         key, sep, raw = item.partition("=")
         if not sep or key not in known:
             raise KeyError(f"Bad override {item!r}; valid keys: {sorted(known)}")
-        setattr(cfg, key, _coerce(key, raw, getattr(cfg, key)))
+        current = getattr(cfg, key)
+        value = raw if isinstance(current, str) else yaml.safe_load(raw)
+        setattr(cfg, key, _coerce(key, value, current))
     return cfg
+
+
+# Fields that may differ when a run resumes: paths, bookkeeping, and a longer max_steps.
+# Anything else changing means it is really a different run.
+RESUME_MAY_CHANGE = frozenset(
+    {
+        "run_name",
+        "max_steps",
+        "data_dir",
+        "ckpt_dir",
+        "log_every",
+        "ckpt_every",
+        "keep_last",
+        "wandb",
+        "compile",
+    }
+)
+
+
+def check_resumable(saved: dict, cfg: TrainConfig) -> None:
+    """Refuse to resume a checkpoint that was trained with a different config."""
+    current = dataclasses.asdict(cfg)
+    changed = sorted(
+        k for k in current.keys() - RESUME_MAY_CHANGE if k in saved and saved[k] != current[k]
+    )
+    if changed:
+        diff = ", ".join(f"{k}: {saved[k]!r} -> {current[k]!r}" for k in changed)
+        raise ValueError(
+            f"{cfg.run_dir} already holds a checkpoint trained with a different config "
+            f"({diff}). Use a new run_name, or delete that directory to start over."
+        )
