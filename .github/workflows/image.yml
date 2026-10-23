@@ -190,12 +190,18 @@ jobs:
 
       # Grype scan of the pushed image. Reports to Security → Code scanning;
       # does not fail the build (CUDA base images always carry some CVEs).
+      # registry: reads the image straight from GHCR (no docker pull + save).
+      # TMPDIR: Grype unpacks the image into the temp dir, and on ubuntu-26.04
+      # /tmp is an 8 GB tmpfs, too small for these images ("disk quota exceeded").
+      # scan.yml repeats this for already-published releases; keep them in sync.
       - name: Vulnerability scan
         id: scan
         if: env.PUSH == 'true'
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        env:
+          TMPDIR: ${{ runner.temp }}
         with:
-          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          image: registry:${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           only-fixed: true
           severity-cutoff: high
           fail-build: false
