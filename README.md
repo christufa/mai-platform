@@ -12,6 +12,7 @@ mai-platform/
 ├── security/              # rulesets + script that applies the repo's GitHub security settings
 └── .github/
     ├── workflows/image.yml          # build, smoke-test, push, sign, scan, prune ghcr.io/<owner>/mai-base
+    ├── workflows/scan.yml           # re-scan a published release (e.g. 0.2.0) with Grype, no rebuild
     ├── workflows/template.yml       # render template + run its tests inside the runtime image
     └── workflows/workflow-lint.yml  # actionlint + zizmor on every workflow (incl. the template's)
 ```

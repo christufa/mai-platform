@@ -1,0 +1,114 @@
+name: scan
+
+# Grype scan of an already-published release (runtime-<version>, dev-<version>),
+# without rebuilding it. Results go to Security → Code scanning against the
+# release tag (v<version>), under the same categories image.yml uses, so a
+# rescan replaces that release's previous result.
+#
+# Use it when a release build's own scan did not run or failed, or to check
+# a pinned release for CVEs published since it was built.
+#
+# Triggers:
+#   manual         workflow_dispatch with the version to scan (e.g. 0.2.0)
+#   pull request   only when this file changes: scans the newest v* release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to scan, without the v (e.g. 0.2.0)
+        required: true
+        type: string
+  pull_request:
+    paths: [".github/workflows/scan.yml"]
+
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/mai-base
+
+concurrency:
+  group: scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: scan (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # Fork PRs get a read-only token and cannot upload results.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read           # resolve the release tag to its commit
+      security-events: write   # upload the scan to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [runtime, dev]
+    steps:
+      - name: Resolve release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(gh api "repos/$REPO/tags" --paginate --jq '.[].name' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -n1)
+          fi
+          if ! grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<< "$VERSION"; then
+            echo "::error::Not a release version: '$VERSION'"; exit 1
+          fi
+          sha=$(gh api "repos/$REPO/commits/v$VERSION" --jq .sha)
+          digest=$(docker buildx imagetools inspect "$IMAGE:$TARGET-$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "Scanning $IMAGE:$TARGET-$VERSION ($digest), release commit $sha"
+          {
+            echo "version=$VERSION"
+            echo "sha=$sha"
+            echo "digest=$digest"
+          } >> "$GITHUB_OUTPUT"
+
+      # Same scan settings as image.yml (see the notes there on registry: and TMPDIR).
+      - name: Vulnerability scan
+        id: scan
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        env:
+          TMPDIR: ${{ runner.temp }}
+        with:
+          image: registry:${{ env.IMAGE }}@${{ steps.release.outputs.digest }}
+          only-fixed: true
+          severity-cutoff: high
+          fail-build: false
+          output-format: sarif
+
+      - name: Upload scan results
+        if: steps.scan.outputs.sarif != ''
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: mai-base-${{ matrix.target }}
+          ref: refs/tags/v${{ steps.release.outputs.version }}
+          sha: ${{ steps.release.outputs.sha }}
+
+      - name: Summary
+        if: steps.scan.outputs.sarif != ''
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ steps.release.outputs.version }}
+          DIGEST: ${{ steps.release.outputs.digest }}
+          SARIF: ${{ steps.scan.outputs.sarif }}
+        run: |
+          # severity-cutoff: high marks high/critical findings as level "error".
+          {
+            echo "### mai-base:${TARGET}-${VERSION}"
+            echo "Digest: \`${DIGEST}\`"
+            echo
+            echo "High/critical findings with a fix: $(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF")"
+            echo "All findings with a fix: $(jq '[.runs[].results[]] | length' "$SARIF")"
+            echo
+            echo '| Finding | Location |'
+            echo '| --- | --- |'
+            jq -r '.runs[].results[] | select(.level == "error")
+              | "| \(.ruleId) | \(.locations[0].physicalLocation.artifactLocation.uri // "") |"' "$SARIF" | sort -u
+          } >> "$GITHUB_STEP_SUMMARY"
