@@ -56,10 +56,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # run with no cache so this actually re-executes and picks up security fixes.
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl wget git git-lfs openssh-client rsync \
+        ca-certificates curl wget git openssh-client rsync \
         sudo unzip zip bzip2 xz-utils jq less procps \
-    && rm -rf /var/lib/apt/lists/* \
-    && git lfs install --system
+    && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu 24.04 images ship a default "ubuntu" user on UID 1000; remove it so
 # our user can take that UID (matches typical host UID for bind mounts).
@@ -106,10 +105,13 @@ ARG GID=1000
 ARG SKYPILOT_EXTRAS="aws,gcp,azure,kubernetes,lambda,runpod"
 
 USER root
+# git-lfs is dev-only: Ubuntu's binary is built with an old Go (go1.22.2) that
+# Grype flags, and cloud jobs fetch models/data over HTTP (HF Hub), not LFS.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential pkg-config zsh tmux vim nano htop nvtop tree \
+        build-essential pkg-config zsh tmux vim nano htop nvtop tree git-lfs \
         libssl-dev libffi-dev libhdf5-dev \
     && rm -rf /var/lib/apt/lists/* \
+    && git lfs install --system \
     && chsh -s /bin/zsh ${USERNAME} \
     && git config --system core.editor vim \
     && git config --system pull.rebase false
