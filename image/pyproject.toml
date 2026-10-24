@@ -38,9 +38,13 @@ dependencies = [
     "pyarrow",
 
     # --- Experiment plumbing ---
-    "wandb>=0.30",
+    "wandb>=0.31",            # 0.31 rebuilt wandb-core on go1.27.2 (GO-2026-6612 etc.)
     "pyyaml",
     "rich",
+
+    # --- Security floors for transitive deps (keep re-locks from going back) ---
+    "pillow>=13.0",           # GHSA-332p-7hrc-92wf and 26 more, all fixed in 13.0.0
+    "certifi>=2026.10.19",    # GHSA-6q48-6c7w-9gw2
 ]
 
 [dependency-groups]
@@ -56,6 +60,7 @@ dev = [
     "ruff",
     "pytest",
     "pre-commit",
+    "virtualenv>=21.14.9",    # via pre-commit; GHSA-c978-59m8-c77v
 ]
 
 [tool.uv]
