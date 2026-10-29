@@ -15,7 +15,7 @@ Every published image is signed with [cosign](https://github.com/sigstore/cosign
 (keyless, via GitHub Actions OIDC) and carries an SBOM and build provenance.
 
 ```bash
-cosign verify ghcr.io/christufa/mai-base:runtime-0.1.0 \
+cosign verify ghcr.io/christufa/mai-base:runtime-0.2.1 \
   --certificate-identity-regexp '^https://github\.com/christufa/mai-platform/\.github/workflows/image\.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
